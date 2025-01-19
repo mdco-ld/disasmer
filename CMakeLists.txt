@@ -5,10 +5,16 @@ project(disasmer VERSION 0.0.1)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(SOURCES
     src/main.cpp
+	src/binary.cpp
+	include/binary.hpp
 )
 
 add_executable(disasmer ${SOURCES})
 
 include_directories(include)
+
+target_compile_options(disasmer PRIVATE -Wall -Wextra -pedantic -Werror)
