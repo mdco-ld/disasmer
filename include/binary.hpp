@@ -3,38 +3,77 @@
 
 #include <cstdint>
 #include <elf.h>
+#include <functional>
+#include <map>
+#include <memory>
 #include <string_view>
-#include <variant>
 #include <vector>
+
+namespace binary {
 
 class Binary {
   public:
-    [[nodiscard]] static Binary fromFile(std::string_view filepath);
-
-    [[nodiscard]] Binary(std::vector<uint8_t> &&data);
-
-    enum class ElfClass {
+    enum class Type {
         Elf32,
         Elf64,
     };
 
-    [[nodiscard]] ElfClass getClass() const noexcept;
+    size_t readIntRef(int8_t &ref, size_t position) const noexcept;
+    size_t readIntRef(int16_t &ref, size_t position) const noexcept;
+    size_t readIntRef(int32_t &ref, size_t position) const noexcept;
+    size_t readIntRef(int64_t &ref, size_t position) const noexcept;
+    size_t readIntRef(uint8_t &ref, size_t position) const noexcept;
+    size_t readIntRef(uint16_t &ref, size_t position) const noexcept;
+    size_t readIntRef(uint32_t &ref, size_t position) const noexcept;
+    size_t readIntRef(uint64_t &ref, size_t position) const noexcept;
 
-    enum class ByteOrder {
-        Lsb,
-        Msb,
-    };
+    virtual ~Binary() = default;
 
-    [[nodiscard]] ByteOrder getByteOrder() const noexcept;
+  protected:
+    using ReaderFn =
+        std::function<uint64_t(size_t, size_t, const std::vector<uint8_t> &)>;
 
-	[[nodiscard]] Elf32_Ehdr getHeader32() const noexcept;
-	[[nodiscard]] Elf64_Ehdr getHeader64() const noexcept;
+    [[nodiscard]] Binary(Type type, std::vector<uint8_t> &&data,
+                         ReaderFn reader);
+
+    std::vector<uint8_t> &getData() noexcept;
 
   private:
+    Type type_;
     std::vector<uint8_t> data_;
-    ElfClass elfClass_;
-    ByteOrder byteOrder_;
-	std::variant<Elf32_Ehdr, Elf64_Ehdr> header_;
+    ReaderFn reader_;
 };
+
+class Elf32 : public Binary {
+  public:
+    explicit Elf32(std::vector<uint8_t> &&data);
+
+    [[nodiscard]] Elf32_Ehdr getHeader() const noexcept;
+    [[nodiscard]] Elf32_Shdr getSectionHeader(size_t idx) const noexcept;
+	[[nodiscard]] const std::string_view getSectionName(size_t idx) const;
+
+  private:
+    Elf32_Ehdr header_;
+    std::vector<Elf32_Shdr> sectionHeaders_;
+    std::map<size_t, std::string> sectionsStringTable_;
+};
+
+class Elf64 : public Binary {
+  public:
+    explicit Elf64(std::vector<uint8_t> &&data);
+
+    [[nodiscard]] Elf64_Ehdr getHeader() const noexcept;
+    [[nodiscard]] Elf64_Shdr getSectionHeader(size_t idx) const noexcept;
+	[[nodiscard]] const std::string_view getSectionName(size_t idx) const;
+
+  private:
+    Elf64_Ehdr header_;
+    std::vector<Elf64_Shdr> sectionHeaders_;
+    std::map<size_t, std::string> sectionsStringTable_;
+};
+
+[[nodiscard]] std::unique_ptr<Binary> fromFile(std::string_view filepath);
+
+} // namespace binary
 
 #endif
