@@ -3,6 +3,7 @@
 #include <cassert>
 #include <elf.h>
 #include <fstream>
+#include <iostream>
 #include <print>
 
 namespace binary {
@@ -131,6 +132,8 @@ std::map<size_t, std::string> readElfStringTable(Binary *bin, size_t offset,
             current += c;
         } else {
             ret.insert({position - current.size() - offset - 1, current});
+            std::println("string offset = {}, string = {}",
+                         position - current.size() - offset - 1, current);
             current.clear();
         }
     }
@@ -196,6 +199,8 @@ Elf64::Elf64(std::vector<std::uint8_t> &&data)
     position = readIntRef(header_.e_shnum, position);
     position = readIntRef(header_.e_shstrndx, position);
 
+    std::println("section header entity size = {}", header_.e_shentsize);
+
     sectionHeaders_.resize(header_.e_shnum);
     position = header_.e_shoff;
     for (size_t i = 0; i < header_.e_shnum; i++) {
@@ -249,11 +254,17 @@ Binary::Binary(Type type, std::vector<uint8_t> &&data, ReaderFn reader)
         throw std::runtime_error("Section index out of bounds");
     }
     auto sectionHeader = sectionHeaders_[idx];
-    auto it = sectionsStringTable_.find(sectionHeader.sh_name);
-    if (it == sectionsStringTable_.end()) {
+    auto it = sectionsStringTable_.upper_bound(sectionHeader.sh_name);
+    it--;
+    if (it->first + it->second.size() < sectionHeader.sh_name) {
+        std::cerr << "INVALID OFFSET: " << sectionHeader.sh_name << std::endl;
         throw std::runtime_error("Invalid offset for section name");
     }
-    return it->second;
+	if (it->first == sectionHeader.sh_name) {
+		return it->second;
+	}
+	std::string_view str = it->second.data() + (sectionHeader.sh_name - it->first);
+	return str;
 }
 
 }; // namespace binary
