@@ -17,8 +17,7 @@ int main(int argc, char *argv[]) {
         auto header = elf64->getHeader();
         std::println("num sections = {}", header.e_shnum);
         for (int i = 0; i < header.e_shnum; i++) {
-            std::println("section = {}, name = {}", i,
-                         elf64->getSectionName(i));
+			std::println("section = {}, type = {}, name = {}", i, elf64->getSectionHeader(i).sh_type, elf64->getSectionName(i));
         }
     } else {
         std::cerr << "Unsupported file type" << std::endl;

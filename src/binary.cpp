@@ -120,26 +120,6 @@ getElfReaderFunction(const std::vector<uint8_t> &data) {
     throw std::runtime_error("Invalid data encoding");
 }
 
-std::map<size_t, std::string> readElfStringTable(Binary *bin, size_t offset,
-                                                 size_t size) {
-    std::map<size_t, std::string> ret;
-    size_t position = offset;
-    int8_t c;
-    std::string current;
-    while (position < offset + size) {
-        position = bin->readIntRef(c, position);
-        if (c) {
-            current += c;
-        } else {
-            ret.insert({position - current.size() - offset - 1, current});
-            std::println("string offset = {}, string = {}",
-                         position - current.size() - offset - 1, current);
-            current.clear();
-        }
-    }
-    return ret;
-}
-
 Elf32::Elf32(std::vector<std::uint8_t> &&data)
     : Binary(Type::Elf32, std::forward<std::vector<uint8_t>>(data),
              getElfReaderFunction(data)) {
@@ -174,9 +154,6 @@ Elf32::Elf32(std::vector<std::uint8_t> &&data)
         position = readIntRef(sectionHeaders_[i].sh_addralign, position);
         position = readIntRef(sectionHeaders_[i].sh_entsize, position);
     }
-    sectionsStringTable_ =
-        readElfStringTable(this, sectionHeaders_[header_.e_shstrndx].sh_offset,
-                           sectionHeaders_[header_.e_shstrndx].sh_size);
 }
 
 Elf64::Elf64(std::vector<std::uint8_t> &&data)
@@ -199,8 +176,6 @@ Elf64::Elf64(std::vector<std::uint8_t> &&data)
     position = readIntRef(header_.e_shnum, position);
     position = readIntRef(header_.e_shstrndx, position);
 
-    std::println("section header entity size = {}", header_.e_shentsize);
-
     sectionHeaders_.resize(header_.e_shnum);
     position = header_.e_shoff;
     for (size_t i = 0; i < header_.e_shnum; i++) {
@@ -215,9 +190,6 @@ Elf64::Elf64(std::vector<std::uint8_t> &&data)
         position = readIntRef(sectionHeaders_[i].sh_addralign, position);
         position = readIntRef(sectionHeaders_[i].sh_entsize, position);
     }
-    sectionsStringTable_ =
-        readElfStringTable(this, sectionHeaders_[header_.e_shstrndx].sh_offset,
-                           sectionHeaders_[header_.e_shstrndx].sh_size);
 }
 
 std::vector<uint8_t> &Binary::getData() noexcept { return data_; }
@@ -237,34 +209,34 @@ Binary::Binary(Type type, std::vector<uint8_t> &&data, ReaderFn reader)
     return sectionHeaders_[idx];
 }
 
-[[nodiscard]] const std::string_view Elf32::getSectionName(size_t idx) const {
-    if (idx >= header_.e_shnum) {
-        throw std::runtime_error("Section header index out of bounds");
-    }
-    auto sectionHeader = sectionHeaders_[idx];
-    auto it = sectionsStringTable_.find(sectionHeader.sh_name);
-    if (it == sectionsStringTable_.end()) {
-        throw std::runtime_error("Invalid offset for section name");
-    }
-    return it->second;
+[[nodiscard]] std::string_view
+Elf32::getStringFromTable(size_t tableIdx, size_t offset) const noexcept {
+    auto sectionHeader = sectionHeaders_[tableIdx];
+    assert(sectionHeader.sh_type == SHT_STRTAB);
+    return reinterpret_cast<const char *>(getData().data() +
+                                          sectionHeader.sh_offset + offset);
 }
 
-[[nodiscard]] const std::string_view Elf64::getSectionName(size_t idx) const {
-    if (idx >= header_.e_shnum) {
-        throw std::runtime_error("Section index out of bounds");
-    }
-    auto sectionHeader = sectionHeaders_[idx];
-    auto it = sectionsStringTable_.upper_bound(sectionHeader.sh_name);
-    it--;
-    if (it->first + it->second.size() < sectionHeader.sh_name) {
-        std::cerr << "INVALID OFFSET: " << sectionHeader.sh_name << std::endl;
-        throw std::runtime_error("Invalid offset for section name");
-    }
-	if (it->first == sectionHeader.sh_name) {
-		return it->second;
-	}
-	std::string_view str = it->second.data() + (sectionHeader.sh_name - it->first);
-	return str;
+[[nodiscard]] std::string_view
+Elf64::getStringFromTable(size_t tableIdx, size_t offset) const noexcept {
+    auto sectionHeader = sectionHeaders_[tableIdx];
+    assert(sectionHeader.sh_type == SHT_STRTAB);
+    return reinterpret_cast<const char *>(getData().data() +
+                                          sectionHeader.sh_offset + offset);
+}
+
+[[nodiscard]] std::string_view
+Elf32::getSectionName(size_t idx) const noexcept {
+    return getStringFromTable(header_.e_shstrndx, sectionHeaders_[idx].sh_name);
+}
+
+[[nodiscard]] std::string_view
+Elf64::getSectionName(size_t idx) const noexcept {
+    return getStringFromTable(header_.e_shstrndx, sectionHeaders_[idx].sh_name);
+}
+
+[[nodiscard]] const std::vector<uint8_t> &Binary::getData() const noexcept {
+	return data_;
 }
 
 }; // namespace binary

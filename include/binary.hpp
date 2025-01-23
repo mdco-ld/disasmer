@@ -29,6 +29,8 @@ class Binary {
 
     virtual ~Binary() = default;
 
+	const std::vector<uint8_t> &getData() const noexcept;
+
   protected:
     using ReaderFn =
         std::function<uint64_t(size_t, size_t, const std::vector<uint8_t> &)>;
@@ -50,12 +52,14 @@ class Elf32 : public Binary {
 
     [[nodiscard]] Elf32_Ehdr getHeader() const noexcept;
     [[nodiscard]] Elf32_Shdr getSectionHeader(size_t idx) const noexcept;
-	[[nodiscard]] const std::string_view getSectionName(size_t idx) const;
+	[[nodiscard]] std::string_view getSectionName(size_t idx) const noexcept;
 
   private:
+
+	[[nodiscard]] std::string_view getStringFromTable(size_t tableIdx, size_t offset) const noexcept;
+
     Elf32_Ehdr header_;
     std::vector<Elf32_Shdr> sectionHeaders_;
-    std::map<size_t, std::string> sectionsStringTable_;
 };
 
 class Elf64 : public Binary {
@@ -64,12 +68,14 @@ class Elf64 : public Binary {
 
     [[nodiscard]] Elf64_Ehdr getHeader() const noexcept;
     [[nodiscard]] Elf64_Shdr getSectionHeader(size_t idx) const noexcept;
-	[[nodiscard]] const std::string_view getSectionName(size_t idx) const;
+	[[nodiscard]] std::string_view getSectionName(size_t idx) const noexcept;
 
   private:
+
+	[[nodiscard]] std::string_view getStringFromTable(size_t tableIdx, size_t offset) const noexcept;
+
     Elf64_Ehdr header_;
     std::vector<Elf64_Shdr> sectionHeaders_;
-    std::map<size_t, std::string> sectionsStringTable_;
 };
 
 [[nodiscard]] std::unique_ptr<Binary> fromFile(std::string_view filepath);
