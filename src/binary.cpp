@@ -253,7 +253,7 @@ Elf64::Elf64(std::vector<std::uint8_t> &&data)
 			}
 			fn.name = getStringFromTable(strtabIdx_, symtab_[i].st_name);
 			fn.size = symtab_[i].st_size;
-			fn.offset = sectionHeaders_[symtab_[i].st_shndx].sh_offset + symtab_[i].st_value;
+			fn.offset = symtab_[i].st_value;
 			functions_.push_back(fn);
         }
     }
@@ -322,6 +322,11 @@ Elf64::getFunctions() const noexcept {
 [[nodiscard]] const std::vector<Function> &
 Elf32::getFunctions() const noexcept {
     return functions_;
+}
+
+[[nodiscard]] const std::span<const uint8_t> Elf64::getFunctionCode(size_t idx) const noexcept {
+	auto fn = functions_[idx];
+	return std::span(getData().begin() + fn.offset, getData().begin() + fn.offset + fn.size);
 }
 
 }; // namespace binary

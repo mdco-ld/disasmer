@@ -11,6 +11,8 @@ set(SOURCES
     src/main.cpp
 	src/binary.cpp
 	include/binary.hpp
+	src/disassemble/x86-64.cpp
+	include/disassemble.hpp
 )
 
 add_executable(disasmer ${SOURCES})

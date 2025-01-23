@@ -83,6 +83,7 @@ class Elf64 : public Binary {
 	[[nodiscard]] std::string_view getSectionName(size_t idx) const noexcept;
 	[[nodiscard]] Elf64_Sym getSymbol(size_t idx) const noexcept;
 	[[nodiscard]] const std::vector<Function> &getFunctions() const noexcept;
+	[[nodiscard]] const std::span<const uint8_t> getFunctionCode(size_t idx) const noexcept;
 
   private:
 

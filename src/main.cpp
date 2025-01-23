@@ -1,25 +1,25 @@
 #include <binary.hpp>
+#include <disassemble.hpp>
 #include <elf.h>
 #include <iostream>
 #include <print>
 
-bool isNameMangled(std::string_view name) { return name.starts_with("_____Z"); }
+bool isNameMangled([[maybe_unused]] std::string_view name) {
+    return name.starts_with("_Z");
+}
 
 size_t readSize(std::string_view data, size_t &position) {
-	size_t ret = 0;
-	while ('0' <= data[position] && data[position] <= '9') {
-		ret *= 10;
-		ret += data[position] - '0';
-		position++;
-	}
-	return ret;
+    size_t ret = 0;
+    while ('0' <= data[position] && data[position] <= '9') {
+        ret *= 10;
+        ret += data[position] - '0';
+        position++;
+    }
+    return ret;
 }
 
 std::string demangleCpp([[maybe_unused]] std::string_view name) {
-	std::string result;
-	size_t offset = 2;
-	if (name[offset] == 'N') {
-	}
+    std::string result(name);
     return result;
 }
 
@@ -30,15 +30,22 @@ int main(int argc, char *argv[]) {
     }
     auto bin = binary::fromFile(argv[1]);
     if (auto elf32 = dynamic_cast<binary::Elf32 *>(bin.get())) {
-        std::cerr << "Elf32" << std::endl;
         [[maybe_unused]] auto header = elf32->getHeader();
     } else if (auto elf64 = dynamic_cast<binary::Elf64 *>(bin.get())) {
-        std::cerr << "Elf64" << std::endl;
         auto functions = elf64->getFunctions();
-        for (auto function : functions) {
-            std::println("function: {}", isNameMangled(function.name)
-                                             ? demangleCpp(function.name)
-                                             : function.name);
+        std::optional<size_t> mainIdx;
+        for (size_t i = 0; i < functions.size(); i++) {
+            auto function = functions[i];
+            if (function.name == "main") {
+                mainIdx = i;
+            }
+        }
+        if (mainIdx.has_value()) {
+            [[maybe_unused]] auto idx = mainIdx.value();
+            auto code = elf64->getFunctionCode(idx);
+            std::println("main:\n{}", disassemble::disassembleX86_64(code));
+        } else {
+            std::println("main function not found");
         }
     } else {
         std::cerr << "Unsupported file type" << std::endl;
