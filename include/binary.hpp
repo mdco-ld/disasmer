@@ -4,12 +4,17 @@
 #include <cstdint>
 #include <elf.h>
 #include <functional>
-#include <map>
 #include <memory>
 #include <string_view>
 #include <vector>
 
 namespace binary {
+
+struct Function {
+	std::string_view name;
+	size_t offset;
+	size_t size;
+};
 
 class Binary {
   public:
@@ -53,6 +58,8 @@ class Elf32 : public Binary {
     [[nodiscard]] Elf32_Ehdr getHeader() const noexcept;
     [[nodiscard]] Elf32_Shdr getSectionHeader(size_t idx) const noexcept;
 	[[nodiscard]] std::string_view getSectionName(size_t idx) const noexcept;
+	[[nodiscard]] Elf32_Sym getSymbol(size_t idx) const noexcept;
+	[[nodiscard]] const std::vector<Function> &getFunctions() const noexcept;
 
   private:
 
@@ -60,6 +67,11 @@ class Elf32 : public Binary {
 
     Elf32_Ehdr header_;
     std::vector<Elf32_Shdr> sectionHeaders_;
+	std::vector<Elf32_Sym> symtab_;
+	std::vector<Elf32_Sym> dynsymtab_;
+	std::vector<Function> functions_;
+
+	size_t strtabIdx_;
 };
 
 class Elf64 : public Binary {
@@ -69,6 +81,8 @@ class Elf64 : public Binary {
     [[nodiscard]] Elf64_Ehdr getHeader() const noexcept;
     [[nodiscard]] Elf64_Shdr getSectionHeader(size_t idx) const noexcept;
 	[[nodiscard]] std::string_view getSectionName(size_t idx) const noexcept;
+	[[nodiscard]] Elf64_Sym getSymbol(size_t idx) const noexcept;
+	[[nodiscard]] const std::vector<Function> &getFunctions() const noexcept;
 
   private:
 
@@ -76,6 +90,11 @@ class Elf64 : public Binary {
 
     Elf64_Ehdr header_;
     std::vector<Elf64_Shdr> sectionHeaders_;
+	std::vector<Elf64_Sym> symtab_;
+	std::vector<Elf64_Sym> dynsymtab_;
+	std::vector<Function> functions_;
+
+	size_t strtabIdx_;
 };
 
 [[nodiscard]] std::unique_ptr<Binary> fromFile(std::string_view filepath);

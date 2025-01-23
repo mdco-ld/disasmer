@@ -36,7 +36,7 @@ Binary::Type identifyFileType(std::vector<uint8_t> &data) {
             throw std::runtime_error("Invalid ELF class");
         }
     }
-    throw std::runtime_error("Unrecognized binary type");
+    throw std::runtime_error("Unrecognized file type");
 }
 
 [[nodiscard]] std::unique_ptr<Binary> fromFile(std::string_view filepath) {
@@ -154,6 +154,23 @@ Elf32::Elf32(std::vector<std::uint8_t> &&data)
         position = readIntRef(sectionHeaders_[i].sh_addralign, position);
         position = readIntRef(sectionHeaders_[i].sh_entsize, position);
     }
+
+    for (size_t i = 0; i < header_.e_shnum; i++) {
+        if (sectionHeaders_[i].sh_type == SHT_DYNSYM) {
+            position = sectionHeaders_[i].sh_offset;
+            while (position <
+                   sectionHeaders_[i].sh_offset + sectionHeaders_[i].sh_size) {
+                Elf32_Sym symbol;
+                position = readIntRef(symbol.st_name, position);
+                position = readIntRef(symbol.st_value, position);
+                position = readIntRef(symbol.st_size, position);
+                position = readIntRef(symbol.st_info, position);
+                position = readIntRef(symbol.st_other, position);
+                position = readIntRef(symbol.st_shndx, position);
+                symtab_.push_back(symbol);
+            }
+        }
+    }
 }
 
 Elf64::Elf64(std::vector<std::uint8_t> &&data)
@@ -189,6 +206,56 @@ Elf64::Elf64(std::vector<std::uint8_t> &&data)
         position = readIntRef(sectionHeaders_[i].sh_info, position);
         position = readIntRef(sectionHeaders_[i].sh_addralign, position);
         position = readIntRef(sectionHeaders_[i].sh_entsize, position);
+    }
+
+    for (size_t i = 0; i < header_.e_shnum; i++) {
+        if (sectionHeaders_[i].sh_type == SHT_DYNSYM) {
+            position = sectionHeaders_[i].sh_offset;
+            while (position <
+                   sectionHeaders_[i].sh_offset + sectionHeaders_[i].sh_size) {
+                Elf64_Sym symbol;
+                position = readIntRef(symbol.st_name, position);
+                position = readIntRef(symbol.st_info, position);
+                position = readIntRef(symbol.st_other, position);
+                position = readIntRef(symbol.st_shndx, position);
+                position = readIntRef(symbol.st_value, position);
+                position = readIntRef(symbol.st_size, position);
+                dynsymtab_.push_back(symbol);
+            }
+        } else if (sectionHeaders_[i].sh_type == SHT_SYMTAB) {
+            position = sectionHeaders_[i].sh_offset;
+            while (position <
+                   sectionHeaders_[i].sh_offset + sectionHeaders_[i].sh_size) {
+                Elf64_Sym symbol;
+                position = readIntRef(symbol.st_name, position);
+                position = readIntRef(symbol.st_info, position);
+                position = readIntRef(symbol.st_other, position);
+                position = readIntRef(symbol.st_shndx, position);
+                position = readIntRef(symbol.st_value, position);
+                position = readIntRef(symbol.st_size, position);
+                symtab_.push_back(symbol);
+            }
+        }
+    }
+    for (size_t i = 0; i < sectionHeaders_.size(); i++) {
+        if (getSectionName(i) == ".strtab") {
+            strtabIdx_ = i;
+        }
+    }
+    for (size_t i = 0; i < symtab_.size(); i++) {
+        if (ELF64_ST_TYPE(symtab_[i].st_info) == STT_FUNC) {
+			Function fn;
+			if (symtab_[i].st_name == 0) {
+				continue;
+			}
+			if (symtab_[i].st_shndx == SHN_UNDEF) {
+				continue;
+			}
+			fn.name = getStringFromTable(strtabIdx_, symtab_[i].st_name);
+			fn.size = symtab_[i].st_size;
+			fn.offset = sectionHeaders_[symtab_[i].st_shndx].sh_offset + symtab_[i].st_value;
+			functions_.push_back(fn);
+        }
     }
 }
 
@@ -236,7 +303,25 @@ Elf64::getSectionName(size_t idx) const noexcept {
 }
 
 [[nodiscard]] const std::vector<uint8_t> &Binary::getData() const noexcept {
-	return data_;
+    return data_;
+}
+
+[[nodiscard]] Elf32_Sym Elf32::getSymbol(size_t idx) const noexcept {
+    return symtab_[idx];
+}
+
+[[nodiscard]] Elf64_Sym Elf64::getSymbol(size_t idx) const noexcept {
+    return symtab_[idx];
+}
+
+[[nodiscard]] const std::vector<Function> &
+Elf64::getFunctions() const noexcept {
+    return functions_;
+}
+
+[[nodiscard]] const std::vector<Function> &
+Elf32::getFunctions() const noexcept {
+    return functions_;
 }
 
 }; // namespace binary

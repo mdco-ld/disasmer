@@ -3,6 +3,26 @@
 #include <iostream>
 #include <print>
 
+bool isNameMangled(std::string_view name) { return name.starts_with("_____Z"); }
+
+size_t readSize(std::string_view data, size_t &position) {
+	size_t ret = 0;
+	while ('0' <= data[position] && data[position] <= '9') {
+		ret *= 10;
+		ret += data[position] - '0';
+		position++;
+	}
+	return ret;
+}
+
+std::string demangleCpp([[maybe_unused]] std::string_view name) {
+	std::string result;
+	size_t offset = 2;
+	if (name[offset] == 'N') {
+	}
+    return result;
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         std::println("Usage: {} <filename>", argv[0]);
@@ -14,10 +34,11 @@ int main(int argc, char *argv[]) {
         [[maybe_unused]] auto header = elf32->getHeader();
     } else if (auto elf64 = dynamic_cast<binary::Elf64 *>(bin.get())) {
         std::cerr << "Elf64" << std::endl;
-        auto header = elf64->getHeader();
-        std::println("num sections = {}", header.e_shnum);
-        for (int i = 0; i < header.e_shnum; i++) {
-			std::println("section = {}, type = {}, name = {}", i, elf64->getSectionHeader(i).sh_type, elf64->getSectionName(i));
+        auto functions = elf64->getFunctions();
+        for (auto function : functions) {
+            std::println("function: {}", isNameMangled(function.name)
+                                             ? demangleCpp(function.name)
+                                             : function.name);
         }
     } else {
         std::cerr << "Unsupported file type" << std::endl;
