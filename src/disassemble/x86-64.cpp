@@ -22,7 +22,16 @@ enum class Register {
 };
 
 [[nodiscard]] inline bool isNegative(uint64_t value, size_t size) noexcept {
-	return (value >> (8 * size - 1)) != 0;
+    return (value >> (8 * size - 1)) != 0;
+}
+
+struct Constant {
+    uint64_t value;
+    size_t size;
+};
+
+[[nodiscard]] inline bool isNegative(Constant constant) noexcept {
+    return isNegative(constant.value, constant.size);
 }
 
 void writeRegister(std::ostream &out, Register reg, size_t regSize,
@@ -98,6 +107,37 @@ void writeRegister(std::ostream &out, Register reg, size_t regSize,
     }
 }
 
+struct Prefix {
+    enum class SegmentOverride {
+        CS,
+        SS,
+        DS,
+        ES,
+        FS,
+        GS,
+        None,
+    };
+    SegmentOverride segOverride;
+    Prefix() { segOverride = SegmentOverride::None; }
+    void setSegmentOverride(uint8_t value) {
+        if (value == 0x2e) {
+            segOverride = SegmentOverride::CS;
+        } else if (value == 0x36) {
+            segOverride = SegmentOverride::SS;
+        } else if (value == 0x3e) {
+            segOverride = SegmentOverride::DS;
+        } else if (value == 0x26) {
+            segOverride = SegmentOverride::ES;
+        } else if (value == 0x64) {
+            segOverride = SegmentOverride::FS;
+        } else if (value == 0x65) {
+            segOverride = SegmentOverride::GS;
+        } else {
+            segOverride = SegmentOverride::None;
+        }
+    }
+};
+
 struct RexPrefix {
     bool present;
     unsigned int w : 1;
@@ -132,13 +172,28 @@ struct ModRM {
     }
 };
 
+struct SIB {
+    bool present;
+    unsigned int scale : 2;
+    unsigned int index : 3;
+    unsigned int base : 3;
+    SIB() { present = false; }
+    SIB(uint8_t value) {
+        scale = value >> 6;
+        index = (value >> 3) & 0b111;
+        base = value & 0b111;
+        present = true;
+    }
+};
+
 struct Instruction {
+    Prefix prefix;
     RexPrefix rexPrefix;
     uint16_t opcode;
     ModRM modRM;
-    uint8_t SIB;
-    uint64_t addressOffset;
-    uint64_t immediate;
+    SIB sib;
+    Constant addressOffset;
+    Constant immediate;
 };
 
 enum class OperandType {
@@ -151,6 +206,8 @@ enum class OperandType {
 
 OperandType getOperandType(const Instruction &ins) {
     switch (ins.opcode) {
+    case 0x31:
+        return OperandType::MR;
     case 0x50:
     case 0x51:
     case 0x52:
@@ -173,15 +230,24 @@ OperandType getOperandType(const Instruction &ins) {
             return OperandType::MI;
         } else if (ins.modRM.reg == 0) {
             return OperandType::MI;
+        } else if (ins.modRM.reg == 7) {
+            return OperandType::MI;
+        }
+        break;
+    case 0x83:
+        if (ins.modRM.reg == 7) {
+            return OperandType::MI;
         }
         break;
     case 0x89:
         return OperandType::MR;
+    case 0x8b:
+        return OperandType::RM;
     }
     throw std::runtime_error("Unimplemented case");
 }
 
-uint64_t readConstant(const std::span<const uint8_t> code, size_t &offset,
+Constant readConstant(const std::span<const uint8_t> code, size_t &offset,
                       ReadingMode mode, size_t size) {
     uint64_t value = 0;
     switch (mode) {
@@ -199,42 +265,48 @@ uint64_t readConstant(const std::span<const uint8_t> code, size_t &offset,
         }
         break;
     }
-    return value;
+    return Constant{.value = value, .size = size};
 }
 
 bool requiresOperandByte(uint8_t opcode) {
     static const std::set<uint8_t> list = {
-        0x29,
-        0x81,
+        0x29, 0x31, 0x32, 0x33, 0x38, 0x81, 0x83, 0x89, 0x8b,
     };
     return list.count(opcode);
 }
 
-void writeConstantHex(std::ostream &out, uint64_t value, size_t size, bool writeSign = true) {
-    if (isNegative(value, size)) {
-		int64_t val = value | ~((1ull << (8 * size)) - 1);
-		if (writeSign) {
-			out << std::format("-0x{:x}", -val);
-		} else {
-			out << std::format("0x{:x}", -val);
-		}
+void writeConstantHex(std::ostream &out, Constant constant,
+                      bool writeSign = true) {
+    if (isNegative(constant)) {
+        int64_t val = constant.value | ~((1ull << (8 * constant.size)) - 1);
+        if (writeSign) {
+            out << std::format("-0x{:x}", -val);
+        } else {
+            out << std::format("0x{:x}", -val);
+        }
     } else {
-        out << std::format("0x{:x}", value);
+        out << std::format("0x{:x}", constant.value);
     }
 }
 
 void writeOperandRM(std::ostream &out, const Instruction &ins,
                     size_t operandSize) {
+    if (ins.prefix.segOverride != Prefix::SegmentOverride::None) {
+        // Segment override present
+        // TODO: Implement segment overrides
+        out << "TODO(segment override)";
+        return;
+    }
     if (ins.modRM.mod == 0) {
         out << '[';
         if (ins.modRM.rm == 5) {
             out << "rip ";
-			if (isNegative(ins.addressOffset, 4)) {
-				out << "- ";
-			} else {
-				out << "+ ";
-			}
-            writeConstantHex(out, ins.addressOffset, 4, false);
+            if (isNegative(ins.addressOffset)) {
+                out << "- ";
+            } else {
+                out << "+ ";
+            }
+            writeConstantHex(out, ins.addressOffset, false);
         } else if (ins.modRM.rm == 4) {
             out << "sib";
         } else {
@@ -252,22 +324,22 @@ void writeOperandRM(std::ostream &out, const Instruction &ins,
                           ins.rexPrefix.present && ins.rexPrefix.b == 1);
             out << " ";
         }
-		if (ins.modRM.mod == 1) {
-			if (isNegative(ins.addressOffset, 1)) {
-				out << "- ";
-			} else {
-				out << "+ ";
-			}
-			writeConstantHex(out, ins.addressOffset, 1, false);
-		} else {
-			if (isNegative(ins.addressOffset, 4)) {
-				out << "- ";
-			} else {
-				out << "+ ";
-			}
-			writeConstantHex(out, ins.addressOffset, 4, false);
-		}
-		out << ']';
+        if (ins.modRM.mod == 1) {
+            if (isNegative(ins.addressOffset)) {
+                out << "- ";
+            } else {
+                out << "+ ";
+            }
+            writeConstantHex(out, ins.addressOffset, false);
+        } else {
+            if (isNegative(ins.addressOffset)) {
+                out << "- ";
+            } else {
+                out << "+ ";
+            }
+            writeConstantHex(out, ins.addressOffset, false);
+        }
+        out << ']';
         return;
     } else if (ins.modRM.mod == 3) {
         writeRegister(out, (Register)ins.modRM.rm, operandSize,
@@ -283,6 +355,12 @@ void readIns(std::ostream &out, const std::span<const uint8_t> code,
     size_t sizeMode = 4;
     Instruction ins;
     uint8_t byte = code[offset];
+    if (byte == 0x64 || byte == 0x65 || byte == 0x26 || byte == 0x3E ||
+        byte == 0x36 || byte == 0x2E) {
+        ins.prefix.setSegmentOverride(byte);
+        offset++;
+        byte = code[offset];
+    }
     if (byte == 0x66) {
         sizeMode = 2;
         offset++;
@@ -310,8 +388,6 @@ void readIns(std::ostream &out, const std::span<const uint8_t> code,
     } catch (...) {
         out << "\tUnimplemented: " << std::format("{:02x}", ins.opcode)
             << std::endl;
-        // std::println(std::cerr, "opcode: {:02x}", ins.opcode);
-        // throw std::runtime_error("LOL");
         return;
     }
     switch (opType) {
@@ -321,6 +397,20 @@ void readIns(std::ostream &out, const std::span<const uint8_t> code,
         if (!ins.modRM.present) {
             ins.modRM = code[offset];
             offset++;
+        }
+        if (ins.modRM.rm == 4 && ins.modRM.mod != 3) {
+            ins.sib = code[offset];
+            offset++;
+            if (ins.sib.base == 5) {
+                if (ins.modRM.mod == 1) {
+                    ins.addressOffset =
+                        readConstant(code, offset, readingMode, 1);
+                } else {
+                    ins.addressOffset =
+                        readConstant(code, offset, readingMode, 4);
+                }
+                break;
+            }
         }
         if (ins.modRM.mod == 0) {
             if (ins.modRM.rm == 5) {
@@ -338,6 +428,14 @@ void readIns(std::ostream &out, const std::span<const uint8_t> code,
         break;
     }
     switch (ins.opcode) {
+    case 0x31:
+        out << "\txor ";
+        writeOperandRM(out, ins, sizeMode);
+        out << ", ";
+        writeRegister(out, (Register)ins.modRM.reg, sizeMode,
+                      ins.rexPrefix.present && ins.rexPrefix.b == 1);
+        out << std::endl;
+        return;
     case 0x50:
     case 0x51:
     case 0x52:
@@ -359,12 +457,15 @@ void readIns(std::ostream &out, const std::span<const uint8_t> code,
             if (ins.modRM.reg == 0) {
                 // Add
                 out << "\tadd ";
-                throw std::runtime_error("TODO 1");
+                writeOperandRM(out, ins, sizeMode);
+                out << ", ";
+                writeConstantHex(out, ins.immediate);
+                out << std::endl;
             } else if (ins.modRM.reg == 5) {
                 out << "\tsub ";
                 writeOperandRM(out, ins, sizeMode);
                 out << ", ";
-                writeConstantHex(out, ins.immediate, sizeMode);
+                writeConstantHex(out, ins.immediate);
                 out << std::endl;
             }
             return;
@@ -375,7 +476,7 @@ void readIns(std::ostream &out, const std::span<const uint8_t> code,
             out << "\tadd ";
             writeOperandRM(out, ins, 8);
             out << ", ";
-            writeConstantHex(out, ins.immediate, 4);
+            writeConstantHex(out, ins.immediate);
             out << std::endl;
         } else if (ins.modRM.reg == 5) {
             // SUB
@@ -383,15 +484,32 @@ void readIns(std::ostream &out, const std::span<const uint8_t> code,
             out << "\tsub ";
             writeOperandRM(out, ins, 8);
             out << ", ";
-            writeConstantHex(out, ins.immediate, 4);
+            writeConstantHex(out, ins.immediate);
             out << std::endl;
         }
         return;
+    case 0x83:
+        if (ins.modRM.reg == 7) {
+            out << "\tcmp ";
+            writeOperandRM(out, ins, sizeMode);
+            out << ", ";
+            writeConstantHex(out, ins.immediate);
+            out << std::endl;
+            return;
+        }
+		break;
     case 0x89:
         out << "\tmov ";
         writeOperandRM(out, ins, sizeMode);
         out << ", ";
         writeRegister(out, (Register)ins.modRM.reg, sizeMode);
+        out << std::endl;
+        return;
+    case 0x8b:
+        out << "\tmov ";
+        writeRegister(out, (Register)ins.modRM.reg, sizeMode);
+        out << ", ";
+        writeOperandRM(out, ins, sizeMode);
         out << std::endl;
         return;
     }
