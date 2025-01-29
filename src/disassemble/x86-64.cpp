@@ -1,14 +1,19 @@
+#include <algorithm>
 #include <cassert>
 #include <disassemble.hpp>
 #include <format>
 #include <iostream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace disassemble {
 
 namespace X86_64 {
+
+namespace old {
 
 enum class Register {
     RAX = 0b000,
@@ -497,7 +502,7 @@ void readIns(std::ostream &out, const std::span<const uint8_t> code,
             out << std::endl;
             return;
         }
-		break;
+        break;
     case 0x89:
         out << "\tmov ";
         writeOperandRM(out, ins, sizeMode);
@@ -516,6 +521,216 @@ void readIns(std::ostream &out, const std::span<const uint8_t> code,
     out << "\tUnimplemented: " << std::format("{:02x}", ins.opcode)
         << std::endl;
 }
+
+}; // namespace old
+
+enum class Register {
+    RAX = 0b000,
+    RCX = 0b001,
+    RDX = 0b010,
+    RBX = 0b011,
+    RSP = 0b100,
+    RBP = 0b101,
+    RSI = 0b110,
+    RDI = 0b111,
+};
+
+enum class OperandModel {
+    None,
+    RegSize,
+    Reg32,
+    Reg64,
+    RmSize,
+    Rm32,
+    Rm64,
+    ImmSize,
+    Imm8,
+    Imm32,
+};
+
+enum class RegSpec {
+    None,
+    R,
+    R0 = 0,
+    R1 = 1,
+    R2 = 2,
+    R3 = 3,
+    R4 = 4,
+    R5 = 5,
+    R6 = 6,
+    R7 = 7,
+};
+
+class InstructionModel {
+  public:
+    InstructionModel(std::initializer_list<uint8_t> opcode, RegSpec regSpec,
+                     std::string_view mnemonic, OperandModel operand1,
+                     OperandModel operand2) {
+        opcode_ = opcode;
+        mnemonic_ = mnemonic;
+        if ((opcode_[0] & 0xf0) == 0x40) {
+            if ((opcode_[0] & 0x8) != 0) {
+                rexPrefixConfig_ = RexPrefixConfig::RexW;
+            } else {
+                rexPrefixConfig_ = RexPrefixConfig::Rex;
+            }
+        } else {
+            rexPrefixConfig_ = RexPrefixConfig::None;
+        }
+        op1_ = operand1;
+        op2_ = operand2;
+        regSpec_ = regSpec;
+    }
+
+    [[nodiscard]] bool requiresModRMByte() const noexcept {
+        return regSpec_ != RegSpec::None;
+    }
+
+  private:
+    enum class RexPrefixConfig {
+        None,
+        Rex,
+        RexW,
+    };
+    std::vector<uint8_t> opcode_;
+    RexPrefixConfig rexPrefixConfig_;
+    std::string_view mnemonic_;
+    RegSpec regSpec_;
+    OperandModel op1_;
+    OperandModel op2_;
+};
+
+static const std::vector<InstructionModel> instructionSet = {
+    InstructionModel({0x81}, RegSpec::R0, "add", OperandModel::RmSize,
+                     OperandModel::ImmSize),
+    InstructionModel({0x48, 0x81}, RegSpec::R0, "add", OperandModel::Rm64,
+                     OperandModel::Imm32),
+};
+
+class Trie {
+  public:
+    Trie() { nodes_.emplace_back(); }
+
+    void insert(std::vector<uint8_t> prefix, size_t instructionIdx) {
+        size_t position = 0;
+        for (uint8_t byte : prefix) {
+            if (!nodes_[position].children.count(byte)) {
+                nodes_[position].children.insert({byte, nodes_.size()});
+				nodes_.emplace_back();
+            }
+			position = nodes_[position].children.at(byte);
+        }
+		nodes_[position].instructionId = instructionIdx;
+    }
+
+  private:
+    struct Node {
+        std::optional<size_t> instructionId;
+        std::map<uint8_t, size_t> children;
+    };
+    std::vector<Node> nodes_;
+};
+
+std::vector<size_t>
+getInstructionsThatMatchSpec(const std::vector<uint8_t> &spec) {
+    if (spec.empty()) {
+        return {};
+    }
+    // TODO: Implement this
+    return {0};
+}
+
+struct Constant {
+    uint64_t value;
+    size_t size;
+};
+
+class InstructionDecoder {
+  public:
+    InstructionDecoder(const std::span<const uint8_t> data,
+                       ReadingMode readingMode)
+        : data_(data), readingMode_(readingMode), offset_(0) {}
+
+    [[nodiscard]] bool done() const noexcept { return offset_ >= data_.size(); }
+
+  private:
+    std::vector<uint8_t> readNextInstructionBytes() {
+        std::vector<uint8_t> ins;
+        while (isPrefixByte(currentByte())) {
+            ins.push_back(getByte());
+        }
+        if (isRexPrefixByte(currentByte())) {
+            ins.push_back(getByte());
+        }
+
+        ins.push_back(getByte());
+
+        std::vector<size_t> possibleInstructions =
+            getInstructionsThatMatchSpec(ins);
+
+        bool requiresModRM = std::any_of(
+            possibleInstructions.begin(), possibleInstructions.end(),
+            [](size_t id) { return instructionSet[id].requiresModRMByte(); });
+
+        if (requiresModRM) {
+            ins.push_back(getByte());
+        }
+        return ins;
+    }
+
+    [[nodiscard]] Constant readConstant(size_t size) noexcept {
+        uint64_t value = 0;
+        switch (readingMode_) {
+        case ReadingMode::LSB:
+            for (size_t i = 0; i < size; i++) {
+                value |= ((uint64_t)getByte()) << (8 * i);
+            }
+            break;
+        case ReadingMode::MSB:
+            for (size_t i = 0; i < size; i++) {
+                value <<= 8;
+                value |= (uint64_t)getByte();
+            }
+            break;
+        }
+        return Constant{.value = value, .size = size};
+    }
+
+    [[nodiscard]] inline uint8_t getByte() noexcept {
+        uint8_t byte = currentByte();
+        advance();
+        return byte;
+    }
+
+    [[nodiscard]] inline uint8_t currentByte() const noexcept {
+        return data_[offset_];
+    }
+
+    inline void advance() noexcept { offset_++; }
+
+    [[nodiscard]] bool isRexPrefixByte(uint8_t byte) const noexcept {
+        return (byte & 0xf0) == 0x40;
+    }
+
+    [[nodiscard]] bool isPrefixByte(uint8_t byte) const noexcept {
+        auto prefixBytes = {
+            0x64,
+            0x65,
+        };
+        for (uint8_t b : prefixBytes) {
+            if (byte == b) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+  private:
+    const std::span<const uint8_t> data_;
+    ReadingMode readingMode_;
+    size_t offset_;
+};
+
 }; // namespace X86_64
 
 std::string disassembleX86_64(const std::span<const uint8_t> code,
@@ -523,7 +738,7 @@ std::string disassembleX86_64(const std::span<const uint8_t> code,
     std::stringstream result;
     size_t offset = 0;
     while (offset < code.size()) {
-        X86_64::readIns(result, code, offset, readingMode);
+        X86_64::old::readIns(result, code, offset, readingMode);
     }
     return result.str();
 }
