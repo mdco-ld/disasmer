@@ -9,8 +9,11 @@ Currently a WIP.
     - Reading symbols from symbol table
     - Finding the locations of functions
 - Disassembling a few x86 instructions
+## In Progress
+- Refactor the instruction decoder/disassembler
 ## TODO
-- Refactor the disassembler
-- Patching
 - Demangling C++ names
+- Patching
 - High level representation of assembly instructions (`RAX += 15`)
+- More ISAs
+- More executable types
