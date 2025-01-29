@@ -2,6 +2,7 @@
 #include <cassert>
 #include <disassemble.hpp>
 #include <format>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <set>
@@ -581,6 +582,10 @@ class InstructionModel {
         op2_ = operand2;
         regSpec_ = regSpec;
     }
+	
+	[[nodiscard]] const std::vector<uint8_t> &getFullOpcode() {
+		return opcode_;
+	}
 
     [[nodiscard]] bool requiresModRMByte() const noexcept {
         return regSpec_ != RegSpec::None;
@@ -600,27 +605,41 @@ class InstructionModel {
     OperandModel op2_;
 };
 
-static const std::vector<InstructionModel> instructionSet = {
-    InstructionModel({0x81}, RegSpec::R0, "add", OperandModel::RmSize,
-                     OperandModel::ImmSize),
-    InstructionModel({0x48, 0x81}, RegSpec::R0, "add", OperandModel::Rm64,
-                     OperandModel::Imm32),
-};
-
 class Trie {
   public:
     Trie() { nodes_.emplace_back(); }
 
-    void insert(std::vector<uint8_t> prefix, size_t instructionIdx) {
+    void insert(const std::vector<uint8_t> &prefix, size_t instructionIdx) {
         size_t position = 0;
         for (uint8_t byte : prefix) {
             if (!nodes_[position].children.count(byte)) {
                 nodes_[position].children.insert({byte, nodes_.size()});
-				nodes_.emplace_back();
+                nodes_.emplace_back();
             }
-			position = nodes_[position].children.at(byte);
+            position = nodes_[position].children.at(byte);
         }
-		nodes_[position].instructionId = instructionIdx;
+        nodes_[position].instructionId = instructionIdx;
+    }
+
+    std::vector<size_t> findByPrefix(const std::span<const uint8_t> &prefix) const {
+        size_t position = 0;
+        for (uint8_t byte : prefix) {
+            if (!nodes_[position].children.count(byte)) {
+                return {};
+            }
+            position = nodes_[position].children.at(byte);
+        }
+        std::vector<size_t> matches;
+        std::function<void(size_t)> dfs = [this, &matches,
+                                           &dfs](size_t position) {
+            if (nodes_[position].instructionId.has_value()) {
+                matches.push_back(nodes_[position].instructionId.value());
+            }
+            for (auto [byte, child] : nodes_[position].children) {
+                dfs(child);
+            }
+        };
+        return matches;
     }
 
   private:
@@ -631,14 +650,34 @@ class Trie {
     std::vector<Node> nodes_;
 };
 
-std::vector<size_t>
-getInstructionsThatMatchSpec(const std::vector<uint8_t> &spec) {
-    if (spec.empty()) {
-        return {};
+class InstructionSet {
+  public:
+    static InstructionSet &instance() {
+        static InstructionSet instance;
+        return instance;
     }
-    // TODO: Implement this
-    return {0};
-}
+
+	std::vector<size_t> findByPrefix(const std::span<const uint8_t> prefix) {
+		return trie.findByPrefix(prefix);
+	}
+
+	const InstructionModel &operator[](size_t id) {
+		return instructions[id];
+	}
+
+  private:
+    InstructionSet() {
+		for (const InstructionModel &_: instructions) {
+		}
+	}
+    const std::vector<InstructionModel> instructions = {
+        InstructionModel({0x81}, RegSpec::R0, "add", OperandModel::RmSize,
+                         OperandModel::ImmSize),
+        InstructionModel({0x48, 0x81}, RegSpec::R0, "add", OperandModel::Rm64,
+                         OperandModel::Imm32),
+    };
+	Trie trie;
+};
 
 struct Constant {
     uint64_t value;
@@ -654,8 +693,9 @@ class InstructionDecoder {
     [[nodiscard]] bool done() const noexcept { return offset_ >= data_.size(); }
 
   private:
-    std::vector<uint8_t> readNextInstructionBytes() {
+	std::pair<size_t, std::vector<uint8_t>> readNextInstructionBytes() {
         std::vector<uint8_t> ins;
+		bool requiresSIB = false;
         while (isPrefixByte(currentByte())) {
             ins.push_back(getByte());
         }
@@ -665,17 +705,21 @@ class InstructionDecoder {
 
         ins.push_back(getByte());
 
-        std::vector<size_t> possibleInstructions =
-            getInstructionsThatMatchSpec(ins);
+        std::vector<size_t> possibleInstructions = InstructionSet::instance().findByPrefix(ins);
 
         bool requiresModRM = std::any_of(
             possibleInstructions.begin(), possibleInstructions.end(),
-            [](size_t id) { return instructionSet[id].requiresModRMByte(); });
+            [](size_t id) { return InstructionSet::instance()[id].requiresModRMByte(); });
 
         if (requiresModRM) {
             ins.push_back(getByte());
+			possibleInstructions = InstructionSet::instance().findByPrefix(ins);
         }
-        return ins;
+
+		if (requiresSIB) {
+			ins.push_back(getByte());
+		}
+        return {possibleInstructions.front(), ins};
     }
 
     [[nodiscard]] Constant readConstant(size_t size) noexcept {
